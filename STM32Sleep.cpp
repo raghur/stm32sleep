@@ -5,15 +5,28 @@
 static void noop() {};
 
 
-void sleepAndWakeUp(SleepMode mode, RTClock *rt, uint8_t seconds) {
+void sleepAndWakeUp(SleepMode mode, RTClock *rt, uint16_t seconds, bool enableWkup) {
   rt->createAlarm(&noop, rt->getTime() + seconds);
-  goToSleep(mode);
+  goToSleep(mode, enableWkup);
 }
-
-void goToSleep(SleepMode mode) {
+WakeupReason wakeupReason() {
+    /*
+     * SBF  WUF     Output
+     * =====================
+     * 1    1       Standby
+     * 0    1       Stop
+     * x    0       Reset/PowerOn
+     */
+    
+    if (PWR_BASE->CSR & PWR_CSR_WUF && PWR_BASE->CSR & PWR_CSR_SBF) return WR_STANDBY;
+    if (PWR_BASE->CSR & PWR_CSR_WUF && PWR_BASE->CSR & PWR_CSR_SBF == 0) return WR_STOP;
+    return WR_POWERON;
+}
+void goToSleep(SleepMode mode, bool enableWkup) {
     // Clear PDDS and LPDS bits
     PWR_BASE->CR &= ~PWR_CR_PDDS;
     PWR_BASE->CR &= ~PWR_CR_LPDS;
+    
 
     // Clear previous wakeup register
     PWR_BASE->CR |= PWR_CR_CWUF;
@@ -22,10 +35,22 @@ void goToSleep(SleepMode mode) {
       PWR_BASE->CR |= PWR_CR_PDDS;
     }
 
+    if (enableWkup)  {
+      if (! (PWR_BASE->CSR & PWR_CSR_EWUP)) {
+        // Set EWUP if wakeup is enabled & EWUP is Low.
+        PWR_BASE->CSR |= PWR_CSR_EWUP;
+      }
+    } else {
+      if (PWR_BASE->CSR & PWR_CSR_EWUP) {
+        // Reset EWUP if wakeup is disabled & EWUP is high.
+        PWR_BASE->CSR &= ~PWR_CSR_EWUP;
+      }
+    }
+    
     PWR_BASE->CR |= PWR_CR_LPDS;
 
     SCB_BASE->SCR |= SCB_SCR_SLEEPDEEP;
-
+    
     // Now go into stop mode, wake up on interrupt
     asm("    wfi");  
 }
